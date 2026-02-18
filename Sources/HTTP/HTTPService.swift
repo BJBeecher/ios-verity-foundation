@@ -21,11 +21,9 @@ public protocol HTTPService: Sendable {
     var unauthorizedPublisher: PassthroughSubject<Void, Never> { get }
     
     func callLoadState<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async -> LoadState<Output>
-    func callAuthLoadState<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async -> LoadState<Output>
     
     func data(from url: URL) async throws -> Data
     func download(from endpoint: URL) async throws -> URL
-    func downloadAuth(from endpoint: URL) async throws -> URL
     func upload(to endpoint: URL, from file: File) async throws
     @discardableResult func multipartUpload<Output: Decodable>(
         to endpoint: HTTPEndpoint<Output>,
@@ -33,8 +31,6 @@ public protocol HTTPService: Sendable {
         onProgress: @escaping @Sendable (TaskProgress) -> Void
     ) async throws -> Output
     @discardableResult func multipartUpload<Output: Decodable>(to endpoint: HTTPEndpoint<Output>, content: [MultipartContent]) async throws -> Output
-    @discardableResult func uploadAuth<Output: Decodable>(to endpoint: HTTPEndpoint<Output>, from file: File) async throws -> Output
-    @discardableResult func callAuth<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async throws -> Output
     @discardableResult func call<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async throws -> Output
 }
 
@@ -52,15 +48,12 @@ public final class APIServiceLiveValue: HTTPService, @unchecked Sendable {
     @Dependency(\.loggingService) private var loggingService
     
     private let session: URLSession
-    private let inteceptors: [HTTPServiceRequestInteceptor]
     public let unauthorizedPublisher = PassthroughSubject<Void, Never>()
     
     init(
-        session: URLSession = .shared,
-        inteceptors: [HTTPServiceRequestInteceptor] = []
+        session: URLSession = .shared
     ) {
         self.session = session
-        self.inteceptors = inteceptors
     }
 }
 
@@ -74,27 +67,12 @@ public extension APIServiceLiveValue {
         return url
     }
     
-    func downloadAuth(from endpoint: URL) async throws -> URL {
-        let request = URLRequest(url: endpoint)
-        let (url, response) = try await session.download(for: request)
-        try checkForServerError(response: response)
-        return url
-    }
-    
     func upload(to endpoint: URL, from file: File) async throws {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "PUT"
         request.setValue(file.contentType.headerValue, forHTTPHeaderField: "Content-Type")
         let (_, response) = try await session.upload(for: request, fromFile: file.url)
         try checkForServerError(response: response)
-    }
-    
-    func uploadAuth<Output: Decodable>(to endpoint: HTTPEndpoint<Output>, from file: File) async throws -> Output {
-        let intercepted = try await intercept(endpoint: endpoint)
-        var request = try intercepted.request()
-        request.setValue(file.contentType.headerValue, forHTTPHeaderField: "Content-Type")
-        let (data, response) = try await session.upload(for: request, fromFile: file.url)
-        return try handleResponse(data: data, response: response, decoder: endpoint.decoder)
     }
     
     func data(from url: URL) async throws -> Data {
@@ -176,23 +154,6 @@ public extension APIServiceLiveValue {
         }
     }
     
-    func callAuthLoadState<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async -> LoadState<Output> {
-        do {
-            let output: Output = try await callAuth(endpoint: endpoint)
-            return .success(output)
-        } catch {
-            return .failure(error)
-        }
-    }
-    
-    @discardableResult
-    func callAuth<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async throws -> Output {
-        let interceptedEndpoint = try await intercept(endpoint: endpoint)
-        let request = try interceptedEndpoint.request()
-        let (data, response) = try await session.data(for: request)
-        return try handleResponse(data: data, response: response, decoder: endpoint.decoder)
-    }
-    
     @discardableResult
     func call<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async throws -> Output {
         let request = try endpoint.request()
@@ -207,7 +168,7 @@ private extension APIServiceLiveValue {
     func intercept<T: Decodable>(endpoint:  HTTPEndpoint<T>) async throws -> HTTPEndpoint<T> {
         var new = endpoint
         
-        for inteceptor in self.inteceptors {
+        for inteceptor in endpoint.intecepters {
             try await inteceptor.intercept(&new)
         }
         
@@ -258,10 +219,6 @@ final class APIServicePreviewValue: HTTPService, @unchecked Sendable {
     
     func upload(to endpoint: URL, from file: File) async throws {}
     
-    func uploadAuth<Output: Decodable>(to endpoint: HTTPEndpoint<Output>, from file: File) async throws -> Output {
-        throw GenericError(message: "Not in use")
-    }
-    
     func multipartUpload<Output>(
         to endpoint: HTTPEndpoint<Output>,
         content: [MultipartContent],
@@ -274,19 +231,7 @@ final class APIServicePreviewValue: HTTPService, @unchecked Sendable {
         throw GenericError(message: "Not in use")
     }
     
-    func downloadAuth(from endpoint: URL) async throws -> URL {
-        throw GenericError(message: "Not in use")
-    }
-    
     func callLoadState<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async -> LoadState<Output> { .loading }
-    
-    func callAuthLoadState<Output>(endpoint: HTTPEndpoint<Output>) async -> LoadState<Output> {
-        .loading
-    }
-    
-    func callAuth<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async throws -> Output {
-        throw GenericError(message: "Not in use")
-    }
     
     func call<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async throws -> Output {
         throw GenericError(message: "Not in use")

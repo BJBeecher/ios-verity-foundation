@@ -94,7 +94,7 @@ final class DataServiceLiveValue: DataService, @unchecked Sendable {
     }
     
     private func performSend<T: Decodable>(endpoint: DataAccessor<T>) async throws -> T {
-        let response: T = try await apiService.callAuth(endpoint: endpoint.endpoint)
+        let response: T = try await apiService.call(endpoint: endpoint.endpoint)
         
         for action in endpoint.postActions {
             Task(priority: .userInitiated) {

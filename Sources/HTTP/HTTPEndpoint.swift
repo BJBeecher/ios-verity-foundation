@@ -33,15 +33,15 @@ public enum HTTPMethod {
 }
 
 public struct HTTPEndpoint<Output: Decodable>: @unchecked Sendable {
-    public let baseUrl: URL
-    public let path: String
-    public let method: HTTPMethod
-    public let body: Encodable?
-    public let bodyParameters: [String: Any]?
-    public let headers: [String: String]
+    public var url: URL
+    public var method: HTTPMethod
+    public var body: Encodable?
+    public var bodyParameters: [String: Any]?
+    public var headers: [String: String]
     public var queryParameters: [URLQueryItem]?
-    public let encoder: JSONEncoder
-    public let decoder: JSONDecoder
+    public var encoder: JSONEncoder
+    public var decoder: JSONDecoder
+    public let intecepters: [HTTPServiceRequestInteceptor]
 
     public var requestKey: String? {
         guard let request = try? request() else {
@@ -60,18 +60,17 @@ public struct HTTPEndpoint<Output: Decodable>: @unchecked Sendable {
     }
     
     public init(
-        baseUrl: URL,
-        path: String,
+        url: URL,
         method: HTTPMethod = .get,
         body: Encodable? = nil,
         bodyParameters: [String: Any]? = nil,
         headers: [String : String] = [:],
         queryParameters: [URLQueryItem]? = nil,
         encoder: JSONEncoder = .init(),
-        decoder: JSONDecoder = .init()
+        decoder: JSONDecoder = .init(),
+        inteceptors: [HTTPServiceRequestInteceptor] = []
     ) {
-        self.baseUrl = baseUrl
-        self.path = path
+        self.url = url
         self.method = method
         self.body = body
         self.bodyParameters = bodyParameters
@@ -79,13 +78,14 @@ public struct HTTPEndpoint<Output: Decodable>: @unchecked Sendable {
         self.queryParameters = queryParameters
         self.encoder = encoder
         self.decoder = decoder
+        self.intecepters = inteceptors
     }
     
     public func request() throws -> URLRequest {
-        var components = URLComponents()
-        components.scheme = baseUrl.scheme
-        components.host = baseUrl.host
-        components.path = baseUrl.path + self.path
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw GenericError(message: "Could not generate URLComponents for \(url)")
+        }
+        
         components.queryItems = self.queryParameters
         
         guard let url = components.url else {
@@ -112,6 +112,3 @@ public struct HTTPEndpoint<Output: Decodable>: @unchecked Sendable {
         return request
     }
 }
-
-// MARK: Endpoints
-
