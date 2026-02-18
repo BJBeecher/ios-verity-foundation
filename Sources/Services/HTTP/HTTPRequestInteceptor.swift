@@ -7,6 +7,6 @@
 
 import Foundation
 
-protocol HTTPRequestInteceptor {
-    func intercept(_ request: inout URLRequest) async throws
+protocol HTTPServiceRequestInteceptor {
+    func intercept<T: Decodable>(_ request: inout HTTPEndpoint<T>) async throws
 }

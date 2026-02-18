@@ -50,14 +50,15 @@ public final class APIServiceLiveValue: HTTPService, @unchecked Sendable {
     @Dependency(\.loggingService) private var loggingService
     
     private let session: URLSession
-    private let inteceptors: [HTTPRequestInteceptor]
+    private let inteceptors: [HTTPServiceRequestInteceptor]
     public let unauthorizedPublisher = PassthroughSubject<Void, Never>()
     
     init(
         session: URLSession = .shared,
-        inteceptors: [HTTPRequestInteceptor] = []
+        inteceptors: [HTTPServiceRequestInteceptor] = []
     ) {
         self.session = session
+        self.inteceptors = inteceptors
     }
 }
 
@@ -72,8 +73,7 @@ public extension APIServiceLiveValue {
     }
     
     func downloadAuth(from endpoint: URL) async throws -> URL {
-        var request = URLRequest(url: endpoint)
-        try await authenticateRequest(request: &request)
+        let request = URLRequest(url: endpoint)
         let (url, response) = try await session.download(for: request)
         try checkForServerError(response: response)
         return url
@@ -88,8 +88,8 @@ public extension APIServiceLiveValue {
     }
     
     func uploadAuth<Output: Decodable>(to endpoint: HTTPEndpoint<Output>, from file: File) async throws -> Output {
-        var request = try endpoint.request()
-        try await authenticateRequest(request: &request)
+        let intercepted = try await intercept(endpoint: endpoint)
+        var request = try intercepted.request()
         request.setValue(file.contentType.headerValue, forHTTPHeaderField: "Content-Type")
         let (data, response) = try await session.upload(for: request, fromFile: file.url)
         return try handleResponse(data: data, response: response, decoder: endpoint.decoder)
@@ -106,8 +106,8 @@ public extension APIServiceLiveValue {
         content: [MultipartContent],
         onProgress: @escaping @Sendable (TaskProgress) -> Void
     ) async throws -> Output {
-        var request = try endpoint.request()
-        try await authenticateRequest(request: &request)
+        let intercepted = try await intercept(endpoint: endpoint)
+        var request = try intercepted.request()
         let multipartBoundary = UUID().uuidString
         request.setValue("multipart/form-data; boundary=\(multipartBoundary)", forHTTPHeaderField: "Content-Type")
         let tempFile = try await fileRepository.createFile(data: Data(), contentType: .multipart)
@@ -185,8 +185,8 @@ public extension APIServiceLiveValue {
     
     @discardableResult
     func callAuth<Output: Decodable>(endpoint: HTTPEndpoint<Output>) async throws -> Output {
-        var request = try endpoint.request()
-        try await authenticateRequest(request: &request)
+        let interceptedEndpoint = try await intercept(endpoint: endpoint)
+        let request = try interceptedEndpoint.request()
         let (data, response) = try await session.data(for: request)
         return try handleResponse(data: data, response: response, decoder: endpoint.decoder)
     }
@@ -202,25 +202,14 @@ public extension APIServiceLiveValue {
 // MARK: Private methods
 
 private extension APIServiceLiveValue {
-    func authenticateRequest(request: inout URLRequest) async throws {
-        guard var tokenSession = try await sessionRepository.currentSession() else {
-            throw GenericError(message: "Missing api session token")
+    func intercept<T: Decodable>(endpoint:  HTTPEndpoint<T>) async throws -> HTTPEndpoint<T> {
+        var new = endpoint
+        
+        for inteceptor in self.inteceptors {
+            try await inteceptor.intercept(&new)
         }
         
-        if tokenSession.expiresAt < .now {
-            tokenSession = try await refreshSession(tokenSession)
-        }
-        
-        request.setValue("Bearer \(tokenSession.accessToken)", forHTTPHeaderField: "Authorization")
-    }
-    
-    func refreshSession(_ session: Session) async throws -> Session {
-        guard session.refreshExpiresAt > .now else {
-            unauthorizedPublisher.send()
-            throw GenericError(message: "Session expired")
-        }
-        
-        return try await sessionRepository.refresh(token: session.refreshToken)
+        return new
     }
     
     func checkForServerError(response: URLResponse) throws {
